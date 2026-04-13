@@ -1,0 +1,196 @@
+// 🔥 FINAL LEVEL HOSTEL MANAGEMENT SYSTEM (ADMIN DASHBOARD + DEFAULTER + MODERN UI + DEPLOY READY)
+
+// ================= BACKEND =================
+
+// Install:
+// npm init -y
+// npm install express mongoose multer cors xlsx pdfkit
+
+const express = require('express');
+const mongoose = require('mongoose');
+const multer = require('multer');
+const XLSX = require('xlsx');
+const cors = require('cors');
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+mongoose.connect('mongodb://127.0.0.1:27017/hostelDB');
+
+// Schemas
+const User = mongoose.model('User', new mongoose.Schema({ email: String, password: String }));
+const Student = mongoose.model('Student', new mongoose.Schema({}, { strict: false }));
+
+const upload = multer({ dest: 'uploads/' });
+
+// Register/Login
+app.post('/register', async (req, res) => {
+  await User.create(req.body);
+  res.send('Registered');
+});
+
+app.post('/login', async (req, res) => {
+  const user = await User.findOne(req.body);
+  res.send(user ? 'Success' : 'Fail');
+});
+
+// Upload Excel
+app.post('/upload', upload.single('file'), async (req, res) => {
+  const workbook = XLSX.readFile(req.file.path);
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(sheet);
+
+  await Student.deleteMany();
+  await Student.insertMany(data);
+
+  res.send('Excel Uploaded');
+});
+
+// Search
+app.get('/student/:code', async (req, res) => {
+  const student = await Student.findOne({ code: req.params.code });
+  res.json(student);
+});
+
+// Payment
+app.post('/payment', async (req, res) => {
+  const { code, amount } = req.body;
+  await Student.updateOne({ code }, { $set: { payment: amount } });
+  res.send('Payment Saved');
+});
+
+// Dashboard Data
+app.get('/dashboard', async (req, res) => {
+  const total = await Student.countDocuments();
+  const paid = await Student.countDocuments({ payment: { $exists: true } });
+  const unpaid = await Student.find({ payment: { $exists: false } });
+
+  res.json({ total, paid, unpaid });
+});
+
+// PDF Receipt
+app.get('/receipt/:code', async (req, res) => {
+  const student = await Student.findOne({ code: req.params.code });
+
+  const doc = new PDFDocument();
+  const filePath = `receipt_${student.code}.pdf`;
+  doc.pipe(fs.createWriteStream(filePath));
+
+  doc.fontSize(20).text('Hostel Receipt');
+  doc.text(`Name: ${student.name}`);
+  doc.text(`Code: ${student.code}`);
+  doc.text(`Amount: ${student.payment}`);
+
+  doc.end();
+
+  setTimeout(() => res.download(filePath), 1000);
+});
+
+app.listen(3000, () => console.log('🚀 Server Running on 3000'));
+
+
+// ================= FRONTEND =================
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Hostel Final System</title>
+  <style>
+    body { font-family: Arial; background: #f4f4f4; text-align: center; }
+    .card { background: white; padding: 20px; margin: 20px; border-radius: 10px; box-shadow: 0 0 10px gray; }
+    input, button { padding: 10px; margin: 5px; }
+  </style>
+</head>
+<body>
+
+<h1>🏨 Hostel Dashboard</h1>
+
+<div class="card">
+  <h3>🔐 Login</h3>
+  <input id="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button onclick="login()">Login</button>
+</div>
+
+<div class="card">
+  <h3>📂 Upload Excel</h3>
+  <input type="file" id="file">
+  <button onclick="upload()">Upload</button>
+</div>
+
+<div class="card">
+  <h3>🔍 Search Student</h3>
+  <input id="code" placeholder="Code">
+  <button onclick="search()">Search</button>
+  <div id="result"></div>
+</div>
+
+<div class="card">
+  <h3>💰 Payment</h3>
+  <input id="amount" placeholder="Amount">
+  <button onclick="pay()">Pay</button>
+  <button onclick="pdf()">Download PDF</button>
+</div>
+
+<div class="card">
+  <h3>📊 Admin Dashboard</h3>
+  <button onclick="dashboard()">Load Dashboard</button>
+  <div id="dash"></div>
+</div>
+
+<script>
+let current;
+
+async function login() {
+  let res = await fetch('http://localhost:3000/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ email: email.value, password: password.value })
+  });
+  alert(await res.text());
+}
+
+async function upload() {
+  let fd = new FormData();
+  fd.append('file', file.files[0]);
+  await fetch('http://localhost:3000/upload',{method:'POST',body:fd});
+  alert('Uploaded');
+}
+
+async function search() {
+  let res = await fetch(`http://localhost:3000/student/${code.value}`);
+  let data = await res.json();
+  current = data;
+
+  let html = '';
+  for (let k in data) html += k + ': ' + data[k] + '<br>';
+  result.innerHTML = html;
+}
+
+async function pay() {
+  await fetch('http://localhost:3000/payment', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ code: current.code, amount: amount.value })
+  });
+  alert('Paid');
+}
+
+function pdf(){ window.open(`http://localhost:3000/receipt/${current.code}`); }
+
+async function dashboard(){
+  let res = await fetch('http://localhost:3000/dashboard');
+  let data = await res.json();
+
+  let html = `Total Students: ${data.total}<br>Paid: ${data.paid}<br><h4>Defaulters:</h4>`;
+  data.unpaid.forEach(s => html += s.name + ' ('+s.code+')<br>');
+
+  dash.innerHTML = html;
+}
+</script>
+
+</body>
+</html>
